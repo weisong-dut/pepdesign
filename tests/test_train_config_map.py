@@ -21,7 +21,21 @@ from pepdesign.train.dataset import (
     load_sft_samples,
     warmup_steps_for,
 )
-from pepdesign.utils.config import GRPOConfig, LoRAConfig, QuantConfig, SFTConfig, load_config
+from pepdesign.utils.config import (
+    GRPOConfig,
+    LoRAConfig,
+    QuantConfig,
+    SFTConfig,
+    load_config,
+    resolve_path,
+)
+
+
+def _skip_without_data(*paths: str) -> None:
+    """数据产物不入库，缺少真实语料时跳过相关断言。"""
+    missing = [p for p in paths if not resolve_path(p).exists()]
+    if missing:
+        pytest.skip("缺少数据产物：" + ", ".join(missing))
 
 # ---------------------------------------------------------------------------
 # 设备 / 精度决策
@@ -411,6 +425,7 @@ def test_real_sft_corpus_passes_validation():
 
     在数据产物与训练代码之间建立会失败的联系，格式漂移时立刻暴露。
     """
+    _skip_without_data("data/processed/sft_train.jsonl")
     rows = load_sft_samples("data/processed/sft_train.jsonl")
     assert len(rows) > 0
     for row in rows[:20]:
@@ -419,6 +434,7 @@ def test_real_sft_corpus_passes_validation():
 
 
 def test_real_grpo_corpus_passes_validation():
+    _skip_without_data("data/processed/grpo_prompts.jsonl")
     rows = load_grpo_prompts("data/processed/grpo_prompts.jsonl")
     assert len(rows) > 0
     for row in rows[:20]:
@@ -431,11 +447,13 @@ def test_load_sft_samples_rejects_grpo_file():
 
     GRPO 的 prompt 没有 assistant 消息，会被当成整段 completion 训练。
     """
+    _skip_without_data("data/processed/grpo_prompts.jsonl")
     with pytest.raises(ValueError, match="缺少必备字段"):
         load_sft_samples("data/processed/grpo_prompts.jsonl")
 
 
 def test_load_grpo_prompts_rejects_sft_file():
+    _skip_without_data("data/processed/sft_train.jsonl")
     with pytest.raises(ValueError, match="缺少必备字段"):
         load_grpo_prompts("data/processed/sft_train.jsonl")
 
@@ -536,7 +554,11 @@ def test_published_step_counts_match_the_real_configs():
     """
     import json
 
-    from pepdesign.utils.config import resolve_path
+    _skip_without_data(
+        "data/processed/dataset_card.json",
+        "data/processed/sft_train.jsonl",
+        "data/processed/grpo_prompts.jsonl",
+    )
 
     sft = load_config("configs/sft_lora.yaml")
     grpo = load_config("configs/grpo_lora.yaml")
@@ -593,7 +615,10 @@ def test_grpo_save_steps_actually_fires():
 
     `save_steps <= 0` 是"从不保存"的哨兵值，不算违规。
     """
-    from pepdesign.utils.config import resolve_path
+    _skip_without_data(
+        "data/processed/grpo_prompts.jsonl",
+        "data/processed/sft_train.jsonl",
+    )
 
     def count_lines(path: str) -> int:
         return len(
