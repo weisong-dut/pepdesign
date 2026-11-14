@@ -1,0 +1,44 @@
+# Virtualenv / build artifacts
+.venv/
+build/
+dist/
+*.egg-info/
+*.py[cod]
+__pycache__/
+*.tgz
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Data and training outputs: corpora and checkpoints are large and not versioned.
+data/raw/
+data/processed/
+data/calibration/
+data/interim/
+outputs/
+wandb/
+*.log
+
+# Local IDE settings
+.idea/
+.vscode/
+.DS_Store
+
+# Private notes and local-only material
+_audit_tmp/
+file/
+train_explain/
+*.pdf
+*.docx
+*.bak
+*.bak-*
+
+# Local report-generation helpers
+convert_to_pdf.py
+generate_pdf.py
+md_to_pdf.py
+regen_sample.jsonl

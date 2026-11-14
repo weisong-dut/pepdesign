@@ -1,0 +1,60 @@
+# 阶段一：LoRA 监督微调
+#
+# 用法：
+#     python scripts/train_sft.py --config configs/sft_lora.yaml
+#
+# 这里只写与默认值不同的项；默认值与逐项说明见 src/pepdesign/utils/config.py。
+
+lora:
+  # 缩放系数为 alpha/r = 2.0。调整 r 时同步调整 alpha，保持该比例不变。
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  # 覆盖全部线性层（QLoRA 的 all-linear 配置）。
+  # 可训练参数量的计算见 models/lora.py:lora_trainable_summary。
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  # manual = 本仓库的 LoRA 实现，peft = 走 peft 库（主要用于数值对照）。
+  backend: manual
+
+quant:
+  # 4bit NF4 基座；无 CUDA 时由 models/loader.py:resolve_plan 自动回退到 fp32。
+  enabled: true
+  load_in_4bit: true
+
+sft:
+  model_name_or_path: LOGOS-Hub/LOGOS-pretrain-3B
+  output_dir: outputs/sft
+  dataset_path: data/processed/sft_train.jsonl
+  eval_dataset_path: data/processed/sft_valid.jsonl
+
+  # 按当前语料长度分布设定，留有充足余量。
+  # 调小不会报错，但超长 prompt 会被截断；修改前先跑 train_sft.py 的长度预检。
+  max_seq_length: 1024
+
+  # 只对答案计算 loss。掩码由 train/masking.py 实现，不依赖 chat template 的
+  # generation 标记（官方模板默认没有该标记）。
+  completion_only_loss: true
+
+  # 等效 batch = 4 × 2 = 8；3 epoch 共 5625 个 optimizer step。
+  num_train_epochs: 3.0
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 2
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  # 步数换算见 train/dataset.py:warmup_steps_for。
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+
+  bf16: true
+  gradient_checkpointing: true
+  logging_steps: 10
+  # 每隔 250 步保存一次，保留最近 3 个 checkpoint。
+  save_steps: 250
+  eval_steps: 250
+  save_total_limit: 3
+  # 断点续训：留空 = 不续训；"latest" = 最新 checkpoint；也可写固定路径。
+  # 恢复内容包括优化器与调度器状态，见 train/checkpoint.py。
+  # resume_from_checkpoint: outputs/sft/checkpoint-1500
+  seed: 42
+  # tensorboard 缺失时 utils/tracking.MetricWriter 自动降级为 no-op。
+  report_to: [tensorboard]

@@ -1,0 +1,109 @@
+# 阶段二：GRPO 强化学习（四维奖励）
+#
+# 用法：
+#     python scripts/train_sft.py  --config configs/sft_lora.yaml     # 阶段一
+#     python scripts/train_grpo.py --config configs/grpo_lora.yaml    # 阶段二
+#
+# 必须先运行 SFT：GRPO 的参考模型是 SFT 后的策略，直接从基座做 RL 会让
+# KL 项把模型拉回预训练分布。详见 train/grpo.py:build_reference_model。
+
+lora:
+  # 必须与 sft_lora.yaml 一致：GRPO 在 SFT adapter 上继续训练，
+  # r / target_modules 不一致会导致权重形状错误或静默漏训某些层。
+  r: 16
+  lora_alpha: 32
+  # GRPO 的 logprob 前向与反向会临时关闭 dropout（见 train/grpo.py），
+  # 此处保留 0.05 只为与 SFT adapter 配置一致。
+  lora_dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  backend: manual
+
+quant:
+  enabled: true
+  load_in_4bit: true
+
+# ---- 奖励权重（可选）----
+# 不写本节时按样本 meta["task"] 选择预设（stabilize → 稳定性优先，
+# de_novo → balanced）。multi_objective 任务始终以 meta["objectives"] 为准。
+# 完整优先级见 utils/config.py:RewardConfig。
+#
+# reward:
+#   preset: activity_first     # balanced | stability_first | activity_first | developability
+#   weights:                   # 只写要覆盖的维度
+#     affinity: 0.55
+#     protease: 0.15
+#
+# ---- 可选：ESM-2 独立审计通道 ----
+# 默认关闭，默认权重为 0：审计信号不参与被优化的目标。
+# 打开后需要下载 ESM 权重；权重不可用时置信度为 0，不影响总奖励。
+#
+#   reward:
+#     plm_backend: esm
+#     weights:
+#       plm: 0.0                 # 审计模式
+#       # plm: 0.15              # 作为第五个优化维度
+
+grpo:
+  model_name_or_path: LOGOS-Hub/LOGOS-pretrain-3B
+  output_dir: outputs/grpo
+  dataset_path: data/processed/grpo_prompts.jsonl
+  # 阶段一的产出；路径错误时 load_adapter 会直接报告缺失文件。
+  sft_adapter_path: outputs/sft/final
+
+  # 组大小 G：同一 prompt 采样 G 条，组内相对比较计算优势。
+  # 显存不足时优先降低 G 与批大小；更大的显卡可以调高。
+  num_generations: 4
+  # 超长 prompt 会从中间截断，保留 system prompt 与结尾约束。
+  max_prompt_length: 512
+  max_completion_length: 256
+  # 温度 0.7：1.0 时格式崩溃率显著升高，过低则组内奖励趋同、梯度消失。
+  temperature: 0.7
+  top_p: 1.0
+  top_k: 0
+
+  # ---- 优化 ----
+  # RL 的学习率比 SFT 小一个量级。
+  learning_rate: 1.0e-5
+  # 等效 batch = 4 × 4 = 16 条 prompt/step。
+  # 4 × 4 比 1 × 16 的 GPU 并行度更好；显存不足时退回 2 × 8。
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  lr_scheduler_type: constant
+  warmup_ratio: 0.0
+  # 3 epoch 共 375 个 optimizer step；num_generations 不进入步数分母，
+  # 见 train/dataset.py:estimate_grpo_num_training_steps。
+  num_train_epochs: 3.0
+
+  # ---- 损失 ----
+  # KL 惩罚系数，防止策略为了刷奖励偏离天然肽分布。
+  beta: 0.04
+  # dr_grpo 按固定长度归一化；四种口径的取舍见 train/advantages.py:loss_denominator。
+  loss_type: dr_grpo
+  epsilon: 0.2          # 重要性比裁剪下界 1-ε
+  clip_higher: 0.28     # 仅 loss_type=dapo 时启用
+  scale_rewards: true
+  # 组内优势标准化方式：std | mean | none。
+  advantage_normalization: std
+
+  # ---- 校准集预热 ----
+  # SFT 后的策略输出合法但缺乏优化方向，组内分数接近，GRPO 难以获得梯度。
+  # 预热用于把起点移到可产生有意义改造方案的区域。
+  calibration_enabled: true
+  calibration_path: data/calibration/calibration_pairs.jsonl
+  calibration_epochs: 1.0
+  calibration_lr_scale: 0.5
+  reset_optimizer_after_calibration: false
+
+  # ---- 工程 ----
+  bf16: true
+  gradient_checkpointing: true
+  # RL 每步记录 reward / KL / 解析失败率，便于定位突发崩溃。
+  logging_steps: 1
+  # save_steps 必须小于总步数，否则不会产生任何 checkpoint。
+  save_steps: 50
+  save_total_limit: 3
+  # 续训时跳过校准预热。可选值：留空 / "latest" / 具体路径。
+  # resume_from_checkpoint: outputs/grpo/checkpoint-200
+  seed: 42
+  report_to: [tensorboard]

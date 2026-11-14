@@ -1,0 +1,87 @@
+[project]
+name = "pepdesign"
+version = "0.1.0"
+description = "多肽/环肽序列设计场景下的大模型微调平台（LOGOS-3B + 手写 LoRA + SFT/GRPO）"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+
+# 依赖分为 core / train / infer / serve-vllm 四组：
+#   * core 只含数据清洗、奖励计算、离线评估所需的纯 CPU 依赖；
+#   * train 与 infer 分别面向训练节点和推理节点，按需安装；
+#   * serve-vllm 单独成组，因为它会把 torch 钉在特定版本上。
+dependencies = [
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+    "tqdm>=4.66",
+    "orjson>=3.9",
+]
+
+[project.optional-dependencies]
+# 训练：transformers + 手写 LoRA + 手写训练循环。
+# peft 仅用于 test_manual_lora_matches_peft 的数值对照，训练路径不 import 它。
+train = [
+    # transformers 5.x 依赖 torch.accelerator，该命名空间从 PyTorch 2.6 起提供。
+    "torch>=2.6",
+    # 下限为实际通过 CPU 冒烟测试的版本。
+    "transformers>=5.0",
+    # 上限为硬约束：huggingface-hub 2.x 的 httpx2 zstd 解码器会导致下载中途崩溃。
+    "huggingface-hub>=1.31,<2.0",
+    "safetensors>=0.4",
+    "peft>=0.13",
+    "bitsandbytes>=0.44",
+    # 运行时可选的指标写入后端；缺失时 MetricWriter 降级为 no-op。
+    "tensorboard>=2.16",
+]
+# 推理服务：FastAPI + OpenAI 兼容接口，支持 transformers / vLLM 两种后端。
+infer = [
+    "torch>=2.6",
+    "transformers>=5.0",
+    "huggingface-hub>=1.31,<2.0",
+    "safetensors>=0.4",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "bitsandbytes>=0.44",
+]
+# vLLM 后端必须单独安装：它锁定具体 torch 版本，并入 infer 会破坏 CPU 开发环境。
+serve-vllm = [
+    "vllm>=0.31",
+]
+dev = [
+    "pytest>=8.2",
+    # 锁定 ruff 小版本区间，避免不同版本给出不同 lint 结论。
+    "ruff>=0.6,<0.15",
+]
+# `all` 不含 serve-vllm，避免安装时覆盖 torch 版本。
+all = ["pepdesign[train,infer]"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pepdesign"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# 显式固定规则集，避免不同 ruff 版本的默认值变化导致本地与 CI 结论不一致。
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "BLE"]
+
+ignore = [
+    # 中文注释与 docstring 中的全角标点是正确写法。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.pytest.ini_options]
+# tests/ 下为纯逻辑测试，无需 GPU 或模型权重。
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "smoke: 需要 torch/transformers（缺依赖时整文件自动 skip）。",
+]

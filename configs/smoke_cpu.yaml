@@ -1,0 +1,70 @@
+# CPU 冒烟配置：不依赖 GPU 验证完整训练链路。
+#
+# 用法（必须带 --smoke）：
+#     python scripts/train_sft.py  --config configs/smoke_cpu.yaml --smoke
+#     python scripts/train_grpo.py --config configs/smoke_cpu.yaml --smoke
+#     python -m pytest -q -m smoke
+#
+# 不加 --smoke 会进入真实训练分支，按 model_name_or_path 下载完整权重；
+# 冒烟分支使用脚本内构造的随机小模型，该字段只用于加载 tokenizer。
+# 冒烟只验证结构性事实（梯度传递、掩码与 labels 对齐、损失为有限值），
+# 不代表训练效果。
+#
+# 依赖（CPU wheel，约 250–400 MB）：
+#     pip install torch transformers safetensors \
+#         --index-url https://download.pytorch.org/whl/cpu
+# 不需要 peft / trl / datasets：LoRA 与训练循环均为本仓库实现。
+
+lora:
+  r: 4                # 保持 alpha/r = 2.0，与真实配置一致
+  lora_alpha: 8
+  lora_dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj]
+  backend: manual
+
+quant:
+  enabled: false      # CPU 上没有 bitsandbytes 后端
+
+sft:
+  model_name_or_path: LOGOS-Hub/LOGOS-pretrain-3B   # 仅用于加载 tokenizer
+  output_dir: outputs/smoke/sft
+  dataset_path: data/processed/sft_train.jsonl
+  eval_dataset_path: null
+  max_seq_length: 256
+  completion_only_loss: true
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-2                 # 步数很少，需要较大 lr 才看得出参数变化
+  max_steps: 3
+  num_train_epochs: 1.0
+  bf16: false
+  fp16: false
+  gradient_checkpointing: false
+  logging_steps: 1
+  save_steps: 0
+  report_to: []
+
+grpo:
+  model_name_or_path: LOGOS-Hub/LOGOS-pretrain-3B   # 仅用于加载 tokenizer
+  output_dir: outputs/smoke/grpo
+  dataset_path: data/processed/grpo_prompts.jsonl
+  sft_adapter_path: ""                  # 从随机初始化的 LoRA 开始
+  num_generations: 2                    # 组大小下界
+  max_prompt_length: 256
+  max_completion_length: 32
+  temperature: 1.0
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-3
+  # max_steps 是步数上限：不写会按 num_train_epochs 跑满。
+  max_steps: 2
+  num_train_epochs: 1.0
+  beta: 0.04
+  loss_type: dr_grpo
+  calibration_enabled: false            # 预热单独测试
+  bf16: false
+  fp16: false
+  gradient_checkpointing: false
+  logging_steps: 1
+  save_steps: 0
+  report_to: []

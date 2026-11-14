@@ -1,0 +1,55 @@
+# 推理服务配置
+#
+# 用法：
+#     python scripts/serve.py --config configs/serve.yaml              # 启动
+#     python scripts/serve.py --config configs/serve.yaml --dry-run    # 校验配置
+#     python scripts/serve.py --config configs/serve.yaml --stub       # 假引擎，只验 HTTP 层
+#
+# 这里只写与默认值不同的项；默认值见 src/pepdesign/utils/config.py 的 InferConfig。
+
+infer:
+  # ---- 后端 ----
+  # transformers（默认）：纯文本栈，CPU 可运行，适合开发与验证。
+  # vllm：PagedAttention + 连续批 + 前缀缓存，需要 GPU，并单独安装：
+  #     pip install -e '.[infer,serve-vllm]'
+  # 缺少 vllm 或 CUDA 时 load() 会抛出带指引的错误，不会静默降级。
+  backend: transformers
+
+  # ---- 模型 ----
+  base_model: LOGOS-Hub/LOGOS-pretrain-3B
+  # 阶段二的产出；留空则以未微调的基座运行。
+  adapter_path: outputs/grpo/final
+  # 若已导出合并模型，可填写此处路径以获得更低的推理开销（不支持热插拔 adapter）。
+  # merged_model_path: outputs/grpo/merged
+
+  # ---- 量化 ----
+  # 有 CUDA 时使用 4bit NF4；CPU 上 resolve_plan 会自动回退 fp32。
+  quantization:
+    enabled: true
+    load_in_4bit: true
+
+  # ---- 上下文 ----
+  # 单条序列的上限，不是并发总容量。32K 上下文在低并发下可用。
+  max_model_len: 32768
+
+  # ---- 成批 ----
+  # 两个上限必须同时满足；只按条数成批会在长 prompt 下 OOM。
+  max_num_seqs: 32              # 单批最多序列数
+  max_num_batched_tokens: 8192  # 单批 token 预算
+  batch_timeout_ms: 50          # 队首等待上限
+  batch_size: 16                # 调度目标值，实际受上面两个上限约束
+
+  # ---- 默认采样参数（请求未指定时使用）----
+  temperature: 0.7
+  top_p: 0.9
+  max_tokens: 256
+  repetition_penalty: 1.05
+  request_timeout_s: 300.0
+
+  # ---- 服务 ----
+  host: 0.0.0.0
+  port: 8000
+
+# vLLM 专属参数（gpu_memory_utilization / block_size / enable_prefix_caching /
+# swap_space / tensor_parallel_size）在 InferConfig 中有默认值，但当前
+# transformers 后端不会读取它们，因此不在此处显式配置。
