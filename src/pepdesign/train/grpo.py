@@ -564,7 +564,10 @@ def peak_gpu_memory_gb() -> float:
     读的是 `allocated` 而不是 `reserved`：前者才是"张量真的占了多少"，
     后者包含分配器的缓存池，会把结论说大。
     """
-    import torch
+    try:
+        import torch
+    except ImportError:
+        return 0.0
 
     if not torch.cuda.is_available():
         return 0.0
